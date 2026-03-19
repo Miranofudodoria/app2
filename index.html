@@ -2,106 +2,144 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>洋館脱出ゲーム - 再構築版</title>
+    <title>洋館脱出 - 完全版</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
-        #gui { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0,0,0,0.5); padding: 10px; font-family: sans-serif; pointer-events: none; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Georgia', serif; }
+        #gui { position: absolute; top: 20px; left: 20px; color: #ccc; background: rgba(0,0,0,0.7); padding: 15px; border: 1px solid #444; pointer-events: none; }
+        #inventory { position: absolute; bottom: 20px; right: 20px; color: gold; font-size: 1.2em; text-shadow: 2px 2px 2px #000; }
+        #crosshair { position: absolute; top: 50%; left: 50%; width: 10px; height: 10px; border: 1px solid rgba(255,255,255,0.5); border-radius: 50%; transform: translate(-50%, -50%); }
+        #clear-screen { display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); color: white; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; }
     </style>
 </head>
 <body>
-    <div id="gui">移動: WASD または 矢印キー<br>視点: マウス移動</div>
+    <div id="gui">クリックで開始 / WASDで移動 / 中央の点を合わせてクリックで調査</div>
+    <div id="inventory">所持品: なし</div>
+    <div id="crosshair"></div>
+    <div id="clear-screen">
+        <h1>脱出成功</h1>
+        <p>あなたは無事に洋館から抜け出した...</p>
+        <button onclick="location.reload()">もう一度プレイ</button>
+    </div>
 
     <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-            }
-        }
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
     </script>
 
     <script type="module">
         import * as THREE from 'three';
         import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 
-        // --- 1. 基本設定 ---
+        // --- ゲーム状態管理 ---
+        let hasKey = false;
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        // --- SE生成関数 (音源ファイル不要) ---
+        function playSE(type) {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            if (type === 'click') { // アイテム取得音
+                osc.type = 'sine'; osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+            } else if (type === 'door') { // ドアのガタガタ音
+                osc.type = 'sawtooth'; osc.frequency.setValueAtTime(100, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.3);
+            }
+        }
+
+        // --- シーン構築 ---
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x111111); // 暗い背景
-        
+        scene.fog = new THREE.Fog(0x000000, 1, 15);
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
         document.body.appendChild(renderer.domElement);
 
-        // --- 2. 照明 (ここが大事！) ---
-        const ambient = new THREE.AmbientLight(0xffffff, 1.0); // 全体を明るく
-        scene.add(ambient);
+        // 照明
+        scene.add(new THREE.AmbientLight(0xffffff, 0.1));
+        const pointLight = new THREE.PointLight(0xffaa44, 50, 10);
+        pointLight.position.set(0, 3, -1);
+        scene.add(pointLight);
 
-        const spot = new THREE.PointLight(0xffaa00, 50); // 暖炉のような暖かい光
-        spot.position.set(0, 3, 0);
-        scene.add(spot);
+        // 部屋
+        const wallMat = new THREE.MeshStandardMaterial({ color: 0x222222, side: THREE.BackSide });
+        const room = new THREE.Mesh(new THREE.BoxGeometry(10, 6, 10), wallMat);
+        room.position.y = 3; scene.add(room);
+        const floor = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), new THREE.MeshStandardMaterial({ color: 0x110a05 }));
+        floor.rotation.x = -Math.PI/2; floor.receiveShadow = true; scene.add(floor);
 
-        // --- 3. 部屋を作る ---
-        // 床
-        const floor = new THREE.Mesh(
-            new THREE.PlaneGeometry(20, 20),
-            new THREE.MeshStandardMaterial({ color: 0x443322 }) // 茶色の床
-        );
-        floor.rotation.x = -Math.PI / 2;
-        scene.add(floor);
+        // テーブル
+        const table = new THREE.Mesh(new THREE.BoxGeometry(2, 0.8, 1), new THREE.MeshStandardMaterial({ color: 0x221100 }));
+        table.position.set(0, 0.4, -2);
+        table.castShadow = true; scene.add(table);
 
-        // 壁（箱を作る）
-        const room = new THREE.Mesh(
-            new THREE.BoxGeometry(10, 6, 10),
-            new THREE.MeshStandardMaterial({ color: 0x555555, side: THREE.BackSide })
-        );
-        room.position.y = 3;
-        scene.add(room);
+        // 鍵 (テーブルの上に置く)
+        const key = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.02), new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffd700, emissiveIntensity: 0.5 }));
+        key.position.set(0.5, 0.9, -2);
+        key.name = "key";
+        scene.add(key);
 
-        // 出口のドア（赤い板）
-        const door = new THREE.Mesh(
-            new THREE.BoxGeometry(1.5, 3, 0.2),
-            new THREE.MeshStandardMaterial({ color: 0x880000 })
-        );
+        // ドア
+        const door = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3, 0.1), new THREE.MeshStandardMaterial({ color: 0x331100 }));
         door.position.set(0, 1.5, -4.9);
+        door.name = "door";
         scene.add(door);
 
-        // --- 4. 操作設定 ---
+        // --- 操作 ---
         const controls = new PointerLockControls(camera, document.body);
-        
-        // 画面クリックで操作開始
         document.body.addEventListener('click', () => {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
             controls.lock();
         });
 
+        const raycaster = new THREE.Raycaster();
+        window.addEventListener('mousedown', () => {
+            if (!controls.isLocked) return;
+            raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+            const intersects = raycaster.intersectObjects(scene.children);
+            if (intersects.length > 0) {
+                const obj = intersects[0].object;
+                if (obj.name === "key") {
+                    hasKey = true;
+                    obj.visible = false;
+                    playSE('click');
+                    document.getElementById('inventory').innerText = "所持品: 古びた金鍵";
+                    alert("鍵を手に入れた！");
+                }
+                if (obj.name === "door") {
+                    if (hasKey) {
+                        playSE('click');
+                        controls.unlock();
+                        document.getElementById('clear-screen').style.display = 'flex';
+                    } else {
+                        playSE('door');
+                        alert("鍵がかかっている...");
+                    }
+                }
+            }
+        });
+
+        // --- 移動 ---
         const keys = {};
         document.addEventListener('keydown', (e) => keys[e.code] = true);
         document.addEventListener('keyup', (e) => keys[e.code] = false);
+        camera.position.set(0, 1.6, 3);
 
-        camera.position.set(0, 1.6, 3); // 人の高さにセット
-
-        // --- 5. ループ処理 ---
         function animate() {
             requestAnimationFrame(animate);
-
             if (controls.isLocked) {
-                const speed = 0.1;
-                if (keys['KeyW'] || keys['ArrowUp']) controls.moveForward(speed);
-                if (keys['KeyS'] || keys['ArrowDown']) controls.moveForward(-speed);
-                if (keys['KeyA'] || keys['ArrowLeft']) controls.moveRight(-speed);
-                if (keys['KeyD'] || keys['ArrowRight']) controls.moveRight(speed);
+                const speed = 0.05;
+                if (keys['KeyW']) controls.moveForward(speed);
+                if (keys['KeyS']) controls.moveForward(-speed);
+                if (keys['KeyA']) controls.moveRight(-speed);
+                if (keys['KeyD']) controls.moveRight(speed);
             }
-
             renderer.render(scene, camera);
         }
         animate();
-
-        // 画面サイズ変更対応
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
     </script>
 </body>
 </html>
