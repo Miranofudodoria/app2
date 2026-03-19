@@ -2,141 +2,134 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>3D脱出ゲーム - 不気味な洋館</title>
+    <title>3D脱出ゲーム - 不気味な洋館 (改良版)</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
         canvas { display: block; }
         #ui {
             position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
             color: white; text-align: center; pointer-events: none;
-            text-shadow: 2px 2px 4px #000;
+            background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px;
         }
         #crosshair {
             position: absolute; top: 50%; left: 50%;
-            width: 10px; height: 10px; border: 1px solid rgba(255,255,255,0.5);
+            width: 8px; height: 8px; border: 2px solid white;
             border-radius: 50%; transform: translate(-50%, -50%);
+            pointer-events: none; z-index: 10;
         }
     </style>
 </head>
 <body>
-    <div id="ui">WASDで移動 / クリックで調べる</div>
+    <div id="ui">画面をクリックして操作開始<br>WASDで移動 / マウスで視点 / クリックで調査</div>
     <div id="crosshair"></div>
 
     <script type="module">
         import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+        import { PointerLockControls } from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/PointerLockControls.js';
 
-        // --- 設定 ---
         const scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x111111, 0.15); // 霧で奥を見えなくする
+        scene.fog = new THREE.FogExp2(0x111111, 0.1);
 
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.shadowMap.enabled = true; // 影を有効化
+        renderer.shadowMap.enabled = true;
         document.body.appendChild(renderer.domElement);
 
-        // --- 部屋の作成 ---
-        // 床
+        // --- 視点操作 (PointerLock) ---
+        const controls = new PointerLockControls(camera, document.body);
+        window.addEventListener('click', () => {
+            if (!controls.isLocked) controls.lock();
+        });
+
+        // --- 部屋 ---
         const floor = new THREE.Mesh(
             new THREE.PlaneGeometry(20, 20),
-            new THREE.MeshStandardMaterial({ color: 0x221100 }) // 暗い木目調のつもり
+            new THREE.MeshStandardMaterial({ color: 0x443322 })
         );
         floor.rotation.x = -Math.PI / 2;
         floor.receiveShadow = true;
         scene.add(floor);
 
-        // 壁（大きな箱の内側）
         const room = new THREE.Mesh(
             new THREE.BoxGeometry(10, 6, 10),
-            new THREE.MeshStandardMaterial({ color: 0x333333, side: THREE.BackSide })
+            new THREE.MeshStandardMaterial({ color: 0x222222, side: THREE.BackSide })
         );
         room.position.y = 3;
-        room.receiveShadow = true;
         scene.add(room);
 
-        // --- オブジェクト（仮のドアや机） ---
-        // 出口のドア（赤い板）
+        // --- オブジェクト ---
         const door = new THREE.Mesh(
             new THREE.BoxGeometry(1.5, 3, 0.2),
-            new THREE.MeshStandardMaterial({ color: 0x442200 })
+            new THREE.MeshStandardMaterial({ color: 0x550000 })
         );
-        door.position.set(0, 1.5, -4.9);
-        door.name = "door"; // 名前をつけて判別しやすくする
+        door.position.set(0, 1.5, -4.8);
+        door.name = "ドア";
         scene.add(door);
 
-        // 謎の箱（クリック対象）
         const box = new THREE.Mesh(
             new THREE.BoxGeometry(0.5, 0.5, 0.5),
-            new THREE.MeshStandardMaterial({ color: 0x880000 })
+            new THREE.MeshStandardMaterial({ color: 0x888800 })
         );
         box.position.set(2, 0.25, -2);
-        box.castShadow = true;
-        box.name = "mysteryBox";
+        box.name = "古い箱";
         scene.add(box);
 
-        // --- 照明 ---
-        const ambientLight = new THREE.AmbientLight(0x404040, 0.3);
+        // --- 照明 (懐中電灯スタイル) ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.2); // 全体を少しだけ見えるように
         scene.add(ambientLight);
 
-        const spotLight = new THREE.SpotLight(0xffffff, 50);
-        spotLight.position.set(0, 5, 0);
-        spotLight.angle = Math.PI / 4;
-        spotLight.penumbra = 0.3;
-        spotLight.castShadow = true;
-        scene.add(spotLight);
+        const flashLight = new THREE.SpotLight(0xffffff, 100, 15, Math.PI / 6, 0.5);
+        flashLight.castShadow = true;
+        // 懐中電灯をカメラと同じ位置に固定
+        scene.add(flashLight);
+        scene.add(flashLight.target);
 
-        // --- インタラクション (Raycaster) ---
+        // --- クリック判定 ---
         const raycaster = new THREE.Raycaster();
-        const mouse = new THREE.Vector2(0, 0); // 画面中央
+        window.addEventListener('mousedown', (e) => {
+            if (!controls.isLocked) return; // ロック中のみ反応
 
-        window.addEventListener('click', () => {
-            raycaster.setFromCamera(mouse, camera);
+            // 画面中央から光線を飛ばす
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
             const intersects = raycaster.intersectObjects(scene.children);
 
             if (intersects.length > 0) {
-                const obj = intersects[0].object;
-                if (obj.name === "door") {
-                    alert("ドアは鍵がかかっている...");
-                } else if (obj.name === "mysteryBox") {
-                    alert("古い箱の中に『錆びた鍵』を見つけた！");
-                    obj.visible = false; // アイテムゲットで消す
+                const target = intersects[0].object;
+                if (target.name === "ドア") alert("鍵がかかっている。");
+                if (target.name === "古い箱") {
+                    alert("箱の中に何かある...");
+                    target.scale.set(0,0,0); // 消去
                 }
             }
         });
 
-        // --- 移動操作 ---
+        // --- 移動 ---
         const keys = {};
-        window.addEventListener('keydown', (e) => keys[e.key.toLowerCase()] = true);
-        window.addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
+        window.addEventListener('keydown', (e) => keys[e.code] = true);
+        window.addEventListener('keyup', (e) => keys[e.code] = false);
 
         camera.position.set(0, 1.6, 3);
 
-        function updateMovement() {
-            const speed = 0.05;
-            if (keys['w']) camera.position.z -= speed;
-            if (keys['s']) camera.position.z += speed;
-            if (keys['a']) camera.position.x -= speed;
-            if (keys['d']) camera.position.x += speed;
-            
-            // 部屋の範囲制限（簡易壁判定）
-            camera.position.x = Math.max(-4.5, Math.min(4.5, camera.position.x));
-            camera.position.z = Math.max(-4.5, Math.min(4.5, camera.position.z));
-        }
-
-        // --- ループ ---
         function animate() {
             requestAnimationFrame(animate);
-            updateMovement();
+
+            if (controls.isLocked) {
+                const speed = 0.1;
+                if (keys['KeyW']) controls.moveForward(speed);
+                if (keys['KeyS']) controls.moveForward(-speed);
+                if (keys['KeyA']) controls.moveRight(-speed);
+                if (keys['KeyD']) controls.moveRight(speed);
+            }
+
+            // 懐中電灯をカメラに追従させる
+            flashLight.position.copy(camera.position);
+            const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+            flashLight.target.position.copy(camera.position).add(direction);
+
             renderer.render(scene, camera);
         }
         animate();
-
-        // リサイズ対応
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
     </script>
 </body>
 </html>
