@@ -2,134 +2,64 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>3D脱出ゲーム - 不気味な洋館 (改良版)</title>
+    <title>3D脱出ゲーム - 不気味な洋館</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #111; font-family: sans-serif; }
         canvas { display: block; }
         #ui {
-            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
             color: white; text-align: center; pointer-events: none;
-            background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px;
+            background: rgba(0,0,0,0.7); padding: 15px; border-radius: 8px; z-index: 100;
         }
         #crosshair {
             position: absolute; top: 50%; left: 50%;
-            width: 8px; height: 8px; border: 2px solid white;
+            width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.8);
             border-radius: 50%; transform: translate(-50%, -50%);
             pointer-events: none; z-index: 10;
         }
     </style>
 </head>
 <body>
-    <div id="ui">画面をクリックして操作開始<br>WASDで移動 / マウスで視点 / クリックで調査</div>
+    <div id="ui">
+        <b>【不気味な洋館】</b><br>
+        画面をクリックして探索開始<br>
+        [W,A,S,D] 移動 / [マウス] 視点 / [クリック] 調べる
+    </div>
     <div id="crosshair"></div>
 
     <script type="module">
         import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
         import { PointerLockControls } from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/PointerLockControls.js';
 
+        // --- シーン設定 ---
         const scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x111111, 0.1);
+        scene.background = new THREE.Color(0x050505);
+        scene.fog = new THREE.Fog(0x050505, 1, 15); // 遠くを暗闇にする
 
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
         renderer.shadowMap.enabled = true;
         document.body.appendChild(renderer.domElement);
 
-        // --- 視点操作 (PointerLock) ---
+        // --- 操作系 (マウスで視点変更) ---
         const controls = new PointerLockControls(camera, document.body);
+        const ui = document.getElementById('ui');
+        
         window.addEventListener('click', () => {
-            if (!controls.isLocked) controls.lock();
+            if (!controls.isLocked) {
+                controls.lock();
+                ui.style.display = 'none'; // プレイ中はUIを隠す
+            }
+        });
+        controls.addEventListener('unlock', () => {
+            ui.style.display = 'block';
         });
 
-        // --- 部屋 ---
-        const floor = new THREE.Mesh(
-            new THREE.PlaneGeometry(20, 20),
-            new THREE.MeshStandardMaterial({ color: 0x443322 })
-        );
-        floor.rotation.x = -Math.PI / 2;
-        floor.receiveShadow = true;
-        scene.add(floor);
-
-        const room = new THREE.Mesh(
-            new THREE.BoxGeometry(10, 6, 10),
-            new THREE.MeshStandardMaterial({ color: 0x222222, side: THREE.BackSide })
-        );
-        room.position.y = 3;
-        scene.add(room);
-
-        // --- オブジェクト ---
-        const door = new THREE.Mesh(
-            new THREE.BoxGeometry(1.5, 3, 0.2),
-            new THREE.MeshStandardMaterial({ color: 0x550000 })
-        );
-        door.position.set(0, 1.5, -4.8);
-        door.name = "ドア";
-        scene.add(door);
-
-        const box = new THREE.Mesh(
-            new THREE.BoxGeometry(0.5, 0.5, 0.5),
-            new THREE.MeshStandardMaterial({ color: 0x888800 })
-        );
-        box.position.set(2, 0.25, -2);
-        box.name = "古い箱";
-        scene.add(box);
-
-        // --- 照明 (懐中電灯スタイル) ---
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.2); // 全体を少しだけ見えるように
+        // --- 強力な照明 (真っ暗対策) ---
+        // 1. 全体を照らす光（強め）
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8); 
         scene.add(ambientLight);
 
-        const flashLight = new THREE.SpotLight(0xffffff, 100, 15, Math.PI / 6, 0.5);
-        flashLight.castShadow = true;
-        // 懐中電灯をカメラと同じ位置に固定
-        scene.add(flashLight);
-        scene.add(flashLight.target);
-
-        // --- クリック判定 ---
-        const raycaster = new THREE.Raycaster();
-        window.addEventListener('mousedown', (e) => {
-            if (!controls.isLocked) return; // ロック中のみ反応
-
-            // 画面中央から光線を飛ばす
-            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-            const intersects = raycaster.intersectObjects(scene.children);
-
-            if (intersects.length > 0) {
-                const target = intersects[0].object;
-                if (target.name === "ドア") alert("鍵がかかっている。");
-                if (target.name === "古い箱") {
-                    alert("箱の中に何かある...");
-                    target.scale.set(0,0,0); // 消去
-                }
-            }
-        });
-
-        // --- 移動 ---
-        const keys = {};
-        window.addEventListener('keydown', (e) => keys[e.code] = true);
-        window.addEventListener('keyup', (e) => keys[e.code] = false);
-
-        camera.position.set(0, 1.6, 3);
-
-        function animate() {
-            requestAnimationFrame(animate);
-
-            if (controls.isLocked) {
-                const speed = 0.1;
-                if (keys['KeyW']) controls.moveForward(speed);
-                if (keys['KeyS']) controls.moveForward(-speed);
-                if (keys['KeyA']) controls.moveRight(-speed);
-                if (keys['KeyD']) controls.moveRight(speed);
-            }
-
-            // 懐中電灯をカメラに追従させる
-            flashLight.position.copy(camera.position);
-            const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-            flashLight.target.position.copy(camera.position).add(direction);
-
-            renderer.render(scene, camera);
-        }
-        animate();
-    </script>
-</body>
-</html>
+        // 2.
