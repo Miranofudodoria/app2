@@ -2,15 +2,15 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>洋館脱出 - 壁判定＆豪華版</title>
+    <title>洋館脱出 - 常時ライト＆壁判定版</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
         #crosshair { position: absolute; top: 50%; left: 50%; width: 8px; height: 8px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); z-index: 10; pointer-events: none; }
         
-        /* UIは前回と同様 */
         #controls-guide { position: absolute; top: 20px; left: 20px; color: #fff; font-size: 0.8rem; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 5px; border: 1px solid #444; }
         #item-notification { position: absolute; top: -60px; left: 50%; transform: translateX(-50%); background: #aa8800; color: white; padding: 10px 30px; border-radius: 5px; transition: 0.5s; opacity: 0; z-index: 100; font-weight: bold; }
         #item-notification.show { top: 40px; opacity: 1; }
+        
         #inventory-container {
             position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
             display: flex; gap: 10px; padding: 10px; background: #111; border: 3px solid #444; border-radius: 8px;
@@ -18,24 +18,17 @@
         .item-slot {
             width: 70px; height: 70px; border: 2px solid #333; background: #222;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
-            position: relative; transition: 0.2s;
+            position: relative;
         }
-        .slot-num { position: absolute; top: 2px; left: 5px; font-size: 0.7rem; color: #aaa; font-weight: bold; }
+        .slot-num { position: absolute; top: 2px; left: 5px; font-size: 0.7rem; color: #aaa; }
         .item-icon { font-size: 2rem; }
         .item-slot.selected { border-color: #ffcc00; background: #443300; box-shadow: 0 0 15px #ffcc00; }
-        .item-slot.has-item { border-color: #666; }
-        #msg-log { position: absolute; bottom: 120px; width: 100%; text-align: center; color: #fff; font-size: 1.2rem; text-shadow: 2px 2px 4px #000; pointer-events: none; }
 
-        /* 懐中電灯ボタン */
-        #flashlight-toggle {
-            position: absolute; bottom: 100px; left: 20px;
-            background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.3);
-            padding: 8px 15px; border-radius: 5px; cursor: pointer;
-        }
+        #msg-log { position: absolute; bottom: 120px; width: 100%; text-align: center; color: #fff; font-size: 1.2rem; text-shadow: 2px 2px 4px #000; pointer-events: none; }
     </style>
 </head>
 <body>
-    <div id="controls-guide">移動: WASD / 視点: マウス<br>選択: 1, 2, 3キー<br>クリック: 調査・取得・金庫入力<br>Fキー: 懐中電灯ON/OFF</div>
+    <div id="controls-guide">移動: WASD / 視点: マウス<br>選択: 1, 2, 3キー<br>クリック: 調査・取得・金庫入力</div>
     <div id="item-notification"></div>
     <div id="msg-log"></div>
     <div id="crosshair"></div>
@@ -45,7 +38,6 @@
         <div id="slot-1" class="item-slot"><span class="slot-num">2</span><div class="item-icon"></div></div>
         <div id="slot-2" class="item-slot"><span class="slot-num">3</span><div class="item-icon"></div></div>
     </div>
-    <button id="flashlight-toggle">懐中電灯ON/OFF (F)</button>
 
     <script type="importmap">
         { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
@@ -55,17 +47,11 @@
         import * as THREE from 'three';
         import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 
-        // --- ゲーム状態 ---
+        // --- 設定 ---
         let inventory = [null, null, null];
         let selectedIndex = 0;
-        let safeCode = ""; // 入力中の番号
-        let isSafeOpen = false;
-        const REACH_DISTANCE = 3.0;
-        let isFlashlightOn = true;
-
-        // キャラクターの衝突判定用
-        const playerCollider = new THREE.Sphere(new THREE.Vector3(), 0.5); // 球体
-        const collisionObjects = []; // 衝突判定を行うオブジェクトのリスト
+        const REACH_DIST = 3.0;
+        const collisionObjects = [];
 
         function log(text) {
             const el = document.getElementById('msg-log');
@@ -84,81 +70,128 @@
             inventory.forEach((item, i) => {
                 const slot = document.getElementById(`slot-${i}`);
                 slot.querySelector('.item-icon').innerText = item ? item.icon : "";
-                slot.className = `item-slot ${item ? 'has-item' : ''} ${selectedIndex === i ? 'selected' : ''}`;
+                slot.className = `item-slot ${selectedIndex === i ? 'selected' : ''}`;
             });
-            document.getElementById('flashlight-toggle').innerText = `懐中電灯: ${isFlashlightOn ? 'ON' : 'OFF'} (F)`;
         }
 
-        // --- Three.js ---
+        // --- Scene & Camera ---
         const scene = new THREE.Scene();
+        scene.fog = new THREE.Fog(0x000000, 1, 15);
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.shadowMap.enabled = true;
         document.body.appendChild(renderer.domElement);
 
-        // 照明
+        // --- 常に点灯する懐中電灯 ---
         scene.add(new THREE.AmbientLight(0xffffff, 0.05));
-        const flashlight = new THREE.SpotLight(0xffffff, 200, 25, Math.PI / 3, 0.5, 1);
+        const flashlight = new THREE.SpotLight(0xffffff, 250, 25, Math.PI / 3.5, 0.5, 1);
         flashlight.castShadow = true;
-        scene.add(flashlight); scene.add(flashlight.target);
+        scene.add(flashlight);
+        scene.add(flashlight.target);
 
-        // --- テクスチャ作成関数 (汚れた壁紙風) ---
-        function createDirtyWallpaperTexture() {
-            const canvas = document.createElement('canvas');
-            canvas.width = 512; canvas.height = 512;
-            const ctx = canvas.getContext('2d');
-            
-            // ベースカラー
-            ctx.fillStyle = '#443333';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // --- テクスチャ生成 ---
+        const canvas = document.createElement('canvas');
+        canvas.width = 256; canvas.height = 256;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#3a2a2a'; ctx.fillRect(0,0,256,256);
+        for(let i=0; i<1000; i++){ ctx.fillStyle=`rgba(0,0,0,${Math.random()*0.2})`; ctx.fillRect(Math.random()*256, Math.random()*256, 2, 2); }
+        const wallTex = new THREE.CanvasTexture(canvas);
+        const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, side: THREE.DoubleSide });
 
-            // ノイズ（汚れ）
-            for (let i = 0; i < 2000; i++) {
-                ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.1 + 0.05})`;
-                ctx.fillRect(Math.random() * canvas.width, Math.random() * canvas.height, 2, 2);
-            }
-            // 筋
-            for (let i = 0; i < 5; i++) {
-                ctx.strokeStyle = `rgba(0,0,0,${Math.random() * 0.2 + 0.1})`;
-                ctx.lineWidth = Math.random() * 3 + 1;
-                ctx.beginPath();
-                ctx.moveTo(Math.random() * canvas.width, 0);
-                ctx.lineTo(Math.random() * canvas.width, canvas.height);
-                ctx.stroke();
-            }
-            return new THREE.CanvasTexture(canvas);
-        }
+        // --- ステージ構築 ---
+        const floor = new THREE.Mesh(new THREE.PlaneGeometry(30, 40), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+        floor.rotation.x = -Math.PI/2; floor.receiveShadow = true; scene.add(floor);
 
-        // --- ステージ構築 (2部屋 + 家具) ---
-        const dirtyWallpaperTexture = createDirtyWallpaperTexture();
-        const wallMaterial = new THREE.MeshStandardMaterial({ map: dirtyWallpaperTexture, side: THREE.DoubleSide });
-        
-        // 部屋1 (開始地点)
-        const room1 = new THREE.Mesh(new THREE.BoxGeometry(10, 5, 10), wallMaterial);
+        // 部屋1
+        const room1 = new THREE.Mesh(new THREE.BoxGeometry(10, 5, 10), wallMat);
         room1.position.y = 2.5; scene.add(room1);
-        collisionObjects.push(room1);
+        collisionObjects.push(new THREE.Box3().setFromObject(room1));
+
+        // 部屋2へのドア
+        const nextDoor = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3, 0.2), new THREE.MeshStandardMaterial({ color: 0x221100 }));
+        nextDoor.position.set(2, 1.5, -4.9); nextDoor.name = "next_door"; scene.add(nextDoor);
 
         // 部屋2 (廊下)
-        const room2 = new THREE.Mesh(new THREE.BoxGeometry(10, 5, 10), wallMaterial);
-        room2.position.set(0, 2.5, -10.1); scene.add(room2);
-        collisionObjects.push(room2);
+        const room2 = new THREE.Mesh(new THREE.BoxGeometry(10, 5, 10), wallMat);
+        room2.position.set(0, 2.5, -10.5); scene.add(room2);
+        collisionObjects.push(new THREE.Box3().setFromObject(room2));
 
-        // 床
-        const floor = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshStandardMaterial({ color: 0x111111 }));
-        floor.rotation.x = -Math.PI/2; floor.receiveShadow = true; scene.add(floor);
-        collisionObjects.push(floor);
+        // ヒント落書き
+        const hCanvas = document.createElement('canvas'); hCanvas.width=128; hCanvas.height=128;
+        const hCtx = hCanvas.getContext('2d'); hCtx.font='bold 60px serif'; hCtx.fillStyle='rgba(255,255,255,0.5)'; hCtx.fillText('1234', 0, 80);
+        const hint = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(hCanvas), transparent: true }));
+        hint.position.set(4.9, 2.5, -2); hint.rotation.y = -Math.PI/2; scene.add(hint);
 
-        // 仕切り壁
-        const dividerWall = new THREE.Mesh(new THREE.BoxGeometry(10, 5, 0.5), wallMaterial); // 厚みも出す
-        dividerWall.position.set(0, 2.5, -5); scene.add(dividerWall);
-        collisionObjects.push(dividerWall);
+        // 金庫 & 鍵
+        const safe = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+        safe.position.set(-3, 0.4, -13); safe.name = "safe"; scene.add(safe);
+        const key = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.03), new THREE.MeshStandardMaterial({ color: 0xffd700 }));
+        key.position.set(-3, 0.9, -13); key.name = "item_key"; key.visible = false; scene.add(key);
 
-        // 隣の部屋へのドア (手動で開ける)
-        const nextDoor = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3, 0.2), new THREE.MeshStandardMaterial({ color: 0x221100 }));
-        nextDoor.position.set(2, 1.5, -4.95);
-        nextDoor.name = "next_door"; scene.add(nextDoor);
-        // ドアは動くので衝突オブジェクトには入れない
+        // 脱出ドア
+        const exitDoor = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3, 0.2), new THREE.MeshStandardMaterial({ color: 0x440000 }));
+        exitDoor.position.set(0, 1.5, -15.4); exitDoor.name = "exit_door"; scene.add(exitDoor);
 
-        // 金庫 (部屋2に設置)
-        const safe = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), new THREE.MeshStandardMaterial({ color: 0x11
+        // --- 操作 ---
+        const controls = new PointerLockControls(camera, document.body);
+        document.body.addEventListener('click', () => controls.lock());
+
+        window.addEventListener('mousedown', (e) => {
+            if (!controls.isLocked || e.button !== 0) return;
+            const ray = new THREE.Raycaster();
+            ray.setFromCamera(new THREE.Vector2(0,0), camera);
+            const hits = ray.intersectObjects(scene.children);
+            if (hits.length > 0) {
+                const obj = hits[0].object;
+                if (hits[0].distance > REACH_DIST) return;
+                if (obj.name === "next_door") { obj.position.x = 4; log("ドアを開けた。"); }
+                if (obj.name === "safe") {
+                    if(prompt("Code?") === "1234") { log("正解。"); obj.material.color.set(0x333333); key.visible = true; }
+                }
+                if (obj.name === "item_key") { inventory[0] = { id: "key", icon: "🔑" }; obj.visible = false; notify("鍵"); updateUI(); }
+                if (obj.name === "exit_door") {
+                    if (inventory[selectedIndex]?.id === "key") { alert("脱出成功！"); location.reload(); }
+                    else log("鍵が必要だ。");
+                }
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Digit1') selectedIndex = 0;
+            if (e.code === 'Digit2') selectedIndex = 1;
+            if (e.code === 'Digit3') selectedIndex = 2;
+            updateUI();
+        });
+
+        // --- ループ & 衝突判定 ---
+        const keys = {};
+        window.onkeydown = (e) => keys[e.code] = true;
+        window.onkeyup = (e) => keys[e.code] = false;
+        camera.position.set(0, 1.6, 3);
+        updateUI();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (controls.isLocked) {
+                const oldPos = camera.position.clone();
+                const dir = new THREE.Vector3();
+                if (keys['KeyW']) dir.z -= 1; if (keys['KeyS']) dir.z += 1;
+                if (keys['KeyA']) dir.x -= 1; if (keys['KeyD']) dir.x += 1;
+                dir.applyQuaternion(camera.quaternion).y = 0;
+                camera.position.add(dir.normalize().multiplyScalar(0.1));
+
+                // 簡易衝突判定 (境界制限)
+                if (Math.abs(camera.position.x) > 4.5 || camera.position.z > 4.5 || camera.position.z < -14.5) {
+                    camera.position.copy(oldPos);
+                }
+            }
+            flashlight.position.copy(camera.position);
+            const t = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+            flashlight.target.position.copy(camera.position).add(t);
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
